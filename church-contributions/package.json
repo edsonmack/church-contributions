@@ -1,0 +1,13 @@
+{
+  "name": "church-contributions",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Contribution tracking platform. Railway runs the build and start scripts below.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm --prefix frontend install --include=dev && npm --prefix frontend run build && npm --prefix backend install --include=dev && npm --prefix backend run build",
+    "start": "npm --prefix backend run start:prod"
+  }
+}

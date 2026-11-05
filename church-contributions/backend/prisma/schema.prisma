@@ -1,0 +1,135 @@
+// Church Contributions Tracker: database schema
+// Every table belongs to an Organisation, so the app is multi-tenant from day one.
+// Amounts are whole Tanzanian shillings (TZS), stored as integers.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrgType {
+  CHURCH
+  WEDDING
+  FUNERAL
+  SENDOFF
+  OTHER
+}
+
+enum Role {
+  OWNER      // treasurer / organiser: full access
+  ASSISTANT  // assistant treasurer: can enter and view payments
+  MEMBER     // future: read-only access to own balance
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+}
+
+model Organisation {
+  id        String   @id @default(uuid())
+  name      String
+  type      OrgType  @default(OTHER)
+  createdAt DateTime @default(now())
+
+  users             User[]
+  members           Member[]
+  contributionTypes ContributionType[]
+  payments          Payment[]
+  auditLogs         AuditLog[]
+}
+
+model User {
+  id             String   @id @default(uuid())
+  organisationId String
+  name           String
+  email          String   @unique
+  passwordHash   String
+  role           Role     @default(ASSISTANT)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id])
+  recorded     Payment[]    @relation("RecordedBy")
+  voided       Payment[]    @relation("VoidedBy")
+  auditLogs    AuditLog[]
+
+  @@index([organisationId])
+}
+
+model Member {
+  id             String   @id @default(uuid())
+  organisationId String
+  name           String
+  phone          String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id])
+  payments     Payment[]
+
+  @@index([organisationId])
+}
+
+model ContributionType {
+  id             String   @id @default(uuid())
+  organisationId String
+  name           String
+  defaultAmount  Int?     // whole TZS, optional
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id])
+  payments     Payment[]
+
+  @@unique([organisationId, name])
+}
+
+model Payment {
+  id                 String        @id @default(uuid())
+  organisationId     String
+  memberId           String
+  contributionTypeId String
+  amount             Int           // whole TZS; partial payments are separate rows
+  paymentDate        DateTime      @db.Date  // when money was received (backdating allowed, no future dates)
+  method             PaymentMethod
+  mobileRef          String?       // mobile money transaction reference
+  notes              String?
+  recordedById       String
+  createdAt          DateTime      @default(now()) // actual time of entry, separate from paymentDate
+
+  // Voiding instead of deleting: nothing ever disappears
+  voidedAt     DateTime?
+  voidReason   String?
+  voidedById   String?
+
+  organisation     Organisation     @relation(fields: [organisationId], references: [id])
+  member           Member           @relation(fields: [memberId], references: [id])
+  contributionType ContributionType @relation(fields: [contributionTypeId], references: [id])
+  recordedBy       User             @relation("RecordedBy", fields: [recordedById], references: [id])
+  voidedBy         User?            @relation("VoidedBy", fields: [voidedById], references: [id])
+
+  @@index([organisationId, paymentDate])
+  @@index([organisationId, memberId])
+  @@index([organisationId, contributionTypeId])
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  organisationId String
+  userId         String
+  action         String   // e.g. PAYMENT_CREATED, PAYMENT_VOIDED, MEMBER_UPDATED
+  entity         String   // e.g. Payment, Member
+  entityId       String
+  details        Json?    // before/after values or void reason
+  createdAt      DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([organisationId, createdAt])
+}
