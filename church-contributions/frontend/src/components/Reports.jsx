@@ -32,6 +32,7 @@ export default function Reports({ notify }) {
   const [mode, setMode] = useState('month');
   const [month, setMonth] = useState(thisMonth);
   const [year, setYear] = useState(thisYear);
+  const [basis, setBasis] = useState('contribution');
   const [state, setState] = useState({ status: 'loading', data: null, error: '' });
   const [exporting, setExporting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -42,7 +43,7 @@ export default function Reports({ notify }) {
     let cancelled = false;
     setState((s) => ({ ...s, status: 'loading', error: '' }));
     api
-      .summary(mode === 'month' ? { month } : { year })
+      .summary(mode === 'month' ? { month } : { year }, basis)
       .then((data) => {
         if (!cancelled) setState({ status: 'ready', data, error: '' });
       })
@@ -52,12 +53,12 @@ export default function Reports({ notify }) {
     return () => {
       cancelled = true;
     };
-  }, [mode, month, year, reloadKey]);
+  }, [mode, month, year, basis, reloadKey]);
 
   async function exportFile() {
     setExporting(true);
     try {
-      const name = await api.exportExcel(period);
+      const name = await api.exportExcel(period, basis);
       notify(`Downloaded ${name}`);
     } catch (err) {
       notify(err.message);
@@ -117,9 +118,29 @@ export default function Reports({ notify }) {
           </button>
         </div>
 
+        <fieldset className="field">
+          <legend>Count money by</legend>
+          <div className="segmented">
+            <label>
+              <input
+                type="radio"
+                name="basis"
+                checked={basis === 'contribution'}
+                onChange={() => setBasis('contribution')}
+              />
+              <span>Contribution month</span>
+            </label>
+            <label>
+              <input type="radio" name="basis" checked={basis === 'received'} onChange={() => setBasis('received')} />
+              <span>Date received</span>
+            </label>
+          </div>
+        </fieldset>
+
         <p className="hint">
-          Each contribution counts in the month it is for, even if the money arrived later. A contribution with no
-          month counts by the date it was received.
+          {basis === 'received'
+            ? 'Every payment counts in the month the money was received, whatever month the contribution is for.'
+            : 'Each contribution counts in the month it is for, even if the money arrived later. A contribution with no month counts by the date it was received.'}
         </p>
 
         {state.status === 'error' && (

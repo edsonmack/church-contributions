@@ -118,9 +118,10 @@ export const api = {
   members: () => request('GET', '/members?active=true'),
   monthly: (contributionTypeId, month) =>
     request('GET', `/reports/monthly?contributionTypeId=${encodeURIComponent(contributionTypeId)}&month=${month}`),
-  summary: (period) => request('GET', `/reports/summary?${period.year ? `year=${period.year}` : `month=${period.month}`}`),
-  exportExcel: (period) =>
-    download(`/reports/export?${period.year ? `year=${period.year}` : `month=${period.month}`}`),
+  summary: (period, basis = 'contribution') =>
+    request('GET', `/reports/summary?${period.year ? `year=${period.year}` : `month=${period.month}`}&basis=${basis}`),
+  exportExcel: (period, basis = 'contribution') =>
+    download(`/reports/export?${period.year ? `year=${period.year}` : `month=${period.month}`}&basis=${basis}`),
   recentPayments: (limit = 10) => request('GET', `/payments?limit=${limit}&includeVoided=true`),
   createPayment: (body) => request('POST', '/payments', body),
   voidPayment: (id, reason) => request('POST', `/payments/${encodeURIComponent(id)}/void`, { reason }),

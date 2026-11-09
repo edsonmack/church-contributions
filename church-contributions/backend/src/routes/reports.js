@@ -27,7 +27,9 @@ function yearRange(year) {
 // Which payments belong to a period (a month range or a year range).
 // A contribution type tied to a month (startMonth) counts in that month, whenever the money arrived.
 // A type with no month counts by the date the money was received.
-function paymentsInPeriod(orgId, range) {
+// With basis "received", every payment counts by the date the money was received, whatever its type.
+function paymentsInPeriod(orgId, range, basis) {
+  if (basis === 'received') return { organisationId: orgId, paymentDate: { gte: range.from, lte: range.to } };
   const fromMonth = isoDate(range.from).slice(0, 7);
   const toMonth = isoDate(range.to).slice(0, 7);
   return {
@@ -40,17 +42,26 @@ function paymentsInPeriod(orgId, range) {
 }
 
 // The month a payment counts for: its type's month if it has one, else the month it was received.
-const effectiveMonth = (p) => (p.contributionType && p.contributionType.startMonth) || isoDate(p.paymentDate).slice(0, 7);
+const effectiveMonth = (p, basis) =>
+  (basis !== 'received' && p.contributionType && p.contributionType.startMonth) || isoDate(p.paymentDate).slice(0, 7);
+
+// ?basis=contribution (default) or ?basis=received. Returns null when the value is not allowed.
+function parseBasis(value) {
+  const v = clean(value) || 'contribution';
+  return v === 'contribution' || v === 'received' ? v : null;
+}
+const BASIS_ERROR = 'basis must be contribution or received';
 
 // Builds the monthly status report for one contribution type. Shared by the screen and the Excel export.
 // For a type tied to a month, that month is used (whatever month was asked for) and payments count
 // whenever they were received. Otherwise payments are counted by the date they were received.
-async function monthlyStatus(orgId, type, askedMonth) {
-  const month = type.startMonth || askedMonth;
+async function monthlyStatus(orgId, type, askedMonth, basis) {
+  const byReceived = basis === 'received';
+  const month = (!byReceived && type.startMonth) || askedMonth;
   const { from, to } = monthRange(month);
 
   const where = { organisationId: orgId, contributionTypeId: type.id, voidedAt: null };
-  if (!type.startMonth) where.paymentDate = { gte: from, lte: to };
+  if (byReceived || !type.startMonth) where.paymentDate = { gte: from, lte: to };
   const payments = await prisma.payment.findMany({
     where,
     select: { memberId: true, amount: true },
@@ -111,9 +122,9 @@ async function monthlyStatus(orgId, type, askedMonth) {
 }
 
 // Money collected in a period. Pass the year (YYYY) to also get the total for each month of it.
-async function summarise(orgId, range, yearParam) {
+async function summarise(orgId, range, yearParam, basis) {
   const rows = await prisma.payment.findMany({
-    where: paymentsInPeriod(orgId, range),
+    where: paymentsInPeriod(orgId, range, basis),
     select: {
       amount: true,
       method: true,
@@ -158,7 +169,7 @@ async function summarise(orgId, range, yearParam) {
     t.count += 1;
     byType.set(p.contributionType.id, t);
 
-    const bucket = byMonth.get(effectiveMonth(p));
+    const bucket = byMonth.get(effectiveMonth(p, basis));
     if (bucket) {
       bucket.total += p.amount;
       bucket.count += 1;
@@ -220,6 +231,8 @@ router.get('/summary', async (req, res, next) => {
     const orgId = req.user.organisationId;
     const monthParam = clean(req.query.month);
     const yearParam = clean(req.query.year);
+    const basis = parseBasis(req.query.basis);
+    if (!basis) return res.status(400).json({ error: BASIS_ERROR });
 
     if (monthParam && yearParam) {
       return res.status(400).json({ error: 'Use either month or year, not both' });
@@ -240,7 +253,7 @@ router.get('/summary', async (req, res, next) => {
       range = monthRange(month);
     }
 
-    const response = await summarise(orgId, range, yearParam);
+    const response = await summarise(orgId, range, yearParam, basis);
     res.json(response);
   } catch (err) {
     next(err);
@@ -292,6 +305,9 @@ router.get('/export', async (req, res, next) => {
     const orgId = req.user.organisationId;
     const monthParam = clean(req.query.month);
     const yearParam = clean(req.query.year);
+    const basis = parseBasis(req.query.basis);
+    if (!basis) return res.status(400).json({ error: BASIS_ERROR });
+    const byReceived = basis === 'received';
 
     if (monthParam && yearParam) {
       return res.status(400).json({ error: 'Use either month or year, not both' });
@@ -322,10 +338,10 @@ router.get('/export', async (req, res, next) => {
       where: { id: orgId },
       select: { name: true },
     });
-    const summary = await summarise(orgId, range, yearParam || null);
+    const summary = await summarise(orgId, range, yearParam || null, basis);
 
     const payments = await prisma.payment.findMany({
-      where: paymentsInPeriod(orgId, range),
+      where: paymentsInPeriod(orgId, range, basis),
       orderBy: { paymentDate: 'asc' },
       select: {
         amount: true,
@@ -352,8 +368,12 @@ router.get('/export', async (req, res, next) => {
     const ws = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
     ws.columns = [{ width: 34 }, { width: 18 }, { width: 14 }];
     ws.addRow([org ? org.name : '']).font = { bold: true, size: 16, color: { argb: INK } };
-    ws.addRow([`Contributions for ${label}`]).font = { size: 12 };
-    ws.addRow(['Each contribution counts in the month it belongs to, whenever the money was received.']).font = {
+    ws.addRow([byReceived ? `Contributions received in ${label}` : `Contributions for ${label}`]).font = { size: 12 };
+    ws.addRow([
+      byReceived
+        ? 'Every payment counts in the month the money was received, whatever month the contribution is for.'
+        : 'Each contribution counts in the month it belongs to, whenever the money was received.',
+    ]).font = {
       italic: true,
       color: { argb: 'FF666666' },
     };
@@ -446,7 +466,7 @@ router.get('/export', async (req, res, next) => {
         orderBy: { name: 'asc' },
       });
       // A type tied to another month belongs in that month's file, not this one.
-      const withAmount = types.filter((t) => t.defaultAmount && (!t.startMonth || t.startMonth === month));
+      const withAmount = types.filter((t) => t.defaultAmount && (byReceived || !t.startMonth || t.startMonth === month));
       if (withAmount.length) {
         const wm = wb.addWorksheet('Who has paid', { views: [{ state: 'frozen', ySplit: 1 }] });
         wm.columns = [
@@ -460,7 +480,7 @@ router.get('/export', async (req, res, next) => {
         ];
         styleHeader(wm.getRow(1));
         for (const type of withAmount) {
-          const report = await monthlyStatus(orgId, type, month);
+          const report = await monthlyStatus(orgId, type, month, basis);
           report.members.forEach((m) => {
             const row = wm.addRow({
               type: type.name,
@@ -479,13 +499,14 @@ router.get('/export', async (req, res, next) => {
 
     await logAudit(prisma, req, 'REPORT_EXPORTED', 'Report', fileLabel, {
       period: summary.period,
+      basis,
       payments: payments.length,
     });
 
     const buffer = await wb.xlsx.writeBuffer();
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="contributions-${fileLabel}.xlsx"`,
+      'Content-Disposition': `attachment; filename="contributions-${fileLabel}${byReceived ? '-received' : ''}.xlsx"`,
       'Cache-Control': 'no-store',
     });
     res.send(Buffer.from(buffer));
