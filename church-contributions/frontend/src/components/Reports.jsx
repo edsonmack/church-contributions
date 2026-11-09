@@ -117,6 +117,11 @@ export default function Reports({ notify }) {
           </button>
         </div>
 
+        <p className="hint">
+          Each contribution counts in the month it is for, even if the money arrived later. A contribution with no
+          month counts by the date it was received.
+        </p>
+
         {state.status === 'error' && (
           <>
             <p className="error">{state.error}</p>

@@ -42,4 +42,13 @@ function parseDateOnly(v) {
   return d;
 }
 
-module.exports = { MAX_AMOUNT, clean, normalisePhone, parseAmount, todayInZone, parseDateOnly };
+// A month written YYYY-MM, for example "2026-08". Empty or null means "not tied to a month".
+function parseMonth(value) {
+  if (value === null || value === undefined || value === '') return { ok: true, value: null };
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return { ok: false };
+  const year = Number(value.slice(0, 4));
+  if (year < 2000 || year > 2100) return { ok: false };
+  return { ok: true, value };
+}
+
+module.exports = { MAX_AMOUNT, clean, normalisePhone, parseAmount, parseMonth, todayInZone, parseDateOnly };

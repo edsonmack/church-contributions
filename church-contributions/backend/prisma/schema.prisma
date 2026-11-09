@@ -80,6 +80,7 @@ model ContributionType {
   organisationId String
   name           String
   defaultAmount  Int?     // whole TZS, optional
+  startMonth     String?  // optional "YYYY-MM": the month this contribution belongs to
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
 

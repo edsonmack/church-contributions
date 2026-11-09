@@ -24,17 +24,35 @@ function yearRange(year) {
   return { from: new Date(Date.UTC(y, 0, 1)), to: new Date(Date.UTC(y, 12, 0)) };
 }
 
+// Which payments belong to a period (a month range or a year range).
+// A contribution type tied to a month (startMonth) counts in that month, whenever the money arrived.
+// A type with no month counts by the date the money was received.
+function paymentsInPeriod(orgId, range) {
+  const fromMonth = isoDate(range.from).slice(0, 7);
+  const toMonth = isoDate(range.to).slice(0, 7);
+  return {
+    organisationId: orgId,
+    OR: [
+      { contributionType: { startMonth: null }, paymentDate: { gte: range.from, lte: range.to } },
+      { contributionType: { startMonth: { gte: fromMonth, lte: toMonth } } },
+    ],
+  };
+}
+
+// The month a payment counts for: its type's month if it has one, else the month it was received.
+const effectiveMonth = (p) => (p.contributionType && p.contributionType.startMonth) || isoDate(p.paymentDate).slice(0, 7);
+
 // Builds the monthly status report for one contribution type. Shared by the screen and the Excel export.
-async function monthlyStatus(orgId, type, month) {
+// For a type tied to a month, that month is used (whatever month was asked for) and payments count
+// whenever they were received. Otherwise payments are counted by the date they were received.
+async function monthlyStatus(orgId, type, askedMonth) {
+  const month = type.startMonth || askedMonth;
   const { from, to } = monthRange(month);
 
+  const where = { organisationId: orgId, contributionTypeId: type.id, voidedAt: null };
+  if (!type.startMonth) where.paymentDate = { gte: from, lte: to };
   const payments = await prisma.payment.findMany({
-    where: {
-      organisationId: orgId,
-      contributionTypeId: type.id,
-      voidedAt: null,
-      paymentDate: { gte: from, lte: to },
-    },
+    where,
     select: { memberId: true, amount: true },
   });
 
@@ -78,7 +96,7 @@ async function monthlyStatus(orgId, type, month) {
   return {
     month,
     period: { from: isoDate(from), to: isoDate(to) },
-    contributionType: { id: type.id, name: type.name, defaultAmount: expected },
+    contributionType: { id: type.id, name: type.name, defaultAmount: expected, startMonth: type.startMonth || null },
     totals: {
       memberCount: members.length,
       paidCount: count('PAID'),
@@ -95,13 +113,13 @@ async function monthlyStatus(orgId, type, month) {
 // Money collected in a period. Pass the year (YYYY) to also get the total for each month of it.
 async function summarise(orgId, range, yearParam) {
   const rows = await prisma.payment.findMany({
-    where: { organisationId: orgId, paymentDate: { gte: range.from, lte: range.to } },
+    where: paymentsInPeriod(orgId, range),
     select: {
       amount: true,
       method: true,
       paymentDate: true,
       voidedAt: true,
-      contributionType: { select: { id: true, name: true } },
+      contributionType: { select: { id: true, name: true, startMonth: true } },
     },
   });
 
@@ -140,7 +158,7 @@ async function summarise(orgId, range, yearParam) {
     t.count += 1;
     byType.set(p.contributionType.id, t);
 
-    const bucket = byMonth.get(isoDate(p.paymentDate).slice(0, 7));
+    const bucket = byMonth.get(effectiveMonth(p));
     if (bucket) {
       bucket.total += p.amount;
       bucket.count += 1;
@@ -160,7 +178,9 @@ async function summarise(orgId, range, yearParam) {
 }
 
 // Who has paid, paid part, or not paid for one contribution type in one month.
-// Payments are counted by the date money was received (paymentDate), never by entry time.
+// Payments are counted by the date money was received (paymentDate), never by entry time,
+// unless the contribution type is tied to a month (startMonth). Then its payments count for that
+// month whenever they were received, and the month asked for is ignored.
 // Voided payments are ignored. Several partial payments add up.
 // GET /api/reports/monthly?contributionTypeId=...&month=2026-11   (month defaults to this month)
 router.get('/monthly', async (req, res, next) => {
@@ -305,7 +325,7 @@ router.get('/export', async (req, res, next) => {
     const summary = await summarise(orgId, range, yearParam || null);
 
     const payments = await prisma.payment.findMany({
-      where: { organisationId: orgId, paymentDate: { gte: range.from, lte: range.to } },
+      where: paymentsInPeriod(orgId, range),
       orderBy: { paymentDate: 'asc' },
       select: {
         amount: true,
@@ -317,7 +337,7 @@ router.get('/export', async (req, res, next) => {
         voidedAt: true,
         voidReason: true,
         member: { select: { name: true, phone: true } },
-        contributionType: { select: { name: true } },
+        contributionType: { select: { name: true, startMonth: true } },
         recordedBy: { select: { name: true } },
         voidedBy: { select: { name: true } },
       },
@@ -332,7 +352,11 @@ router.get('/export', async (req, res, next) => {
     const ws = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
     ws.columns = [{ width: 34 }, { width: 18 }, { width: 14 }];
     ws.addRow([org ? org.name : '']).font = { bold: true, size: 16, color: { argb: INK } };
-    ws.addRow([`Contributions received, ${label}`]).font = { size: 12 };
+    ws.addRow([`Contributions for ${label}`]).font = { size: 12 };
+    ws.addRow(['Each contribution counts in the month it belongs to, whenever the money was received.']).font = {
+      italic: true,
+      color: { argb: 'FF666666' },
+    };
     ws.addRow([`Period: ${summary.period.from} to ${summary.period.to}`]);
     ws.addRow([`Prepared ${tanzaniaTime(new Date())} (Tanzania time). All amounts are Tanzanian shillings (TZS).`]).font = {
       italic: true,
@@ -379,6 +403,7 @@ router.get('/export', async (req, res, next) => {
       { header: 'Member', key: 'member', width: 26 },
       { header: 'Phone', key: 'phone', width: 16 },
       { header: 'Contribution', key: 'type', width: 22 },
+      { header: 'Counts for month', key: 'forMonth', width: 18 },
       { header: 'Amount (TZS)', key: 'amount', width: 15, style: { numFmt: TZS_FORMAT } },
       { header: 'Paid by', key: 'method', width: 14 },
       { header: 'Mobile money reference', key: 'ref', width: 24 },
@@ -396,6 +421,7 @@ router.get('/export', async (req, res, next) => {
         member: p.member ? p.member.name : '',
         phone: p.member && p.member.phone ? p.member.phone : '',
         type: p.contributionType ? p.contributionType.name : '',
+        forMonth: monthName(effectiveMonth(p)),
         amount: p.amount,
         method: METHOD_LABEL[p.method] || p.method,
         ref: p.mobileRef || '',
@@ -410,7 +436,7 @@ router.get('/export', async (req, res, next) => {
       row.getCell('phone').numFmt = '@';
       if (p.voidedAt) row.font = { strike: true, color: { argb: 'FFB3261E' } };
     });
-    wp.autoFilter = { from: 'A1', to: 'M1' };
+    wp.autoFilter = { from: 'A1', to: 'N1' };
 
     // --- Who has paid (one month only) ---
     if (monthParam || !yearParam) {
@@ -419,7 +445,8 @@ router.get('/export', async (req, res, next) => {
         where: { organisationId: orgId, active: true },
         orderBy: { name: 'asc' },
       });
-      const withAmount = types.filter((t) => t.defaultAmount);
+      // A type tied to another month belongs in that month's file, not this one.
+      const withAmount = types.filter((t) => t.defaultAmount && (!t.startMonth || t.startMonth === month));
       if (withAmount.length) {
         const wm = wb.addWorksheet('Who has paid', { views: [{ state: 'frozen', ySplit: 1 }] });
         wm.columns = [
