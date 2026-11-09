@@ -1,7 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { clean, parseAmount } = require('../validate');
+const { clean, parseAmount, parseMonth } = require('../validate');
 const { logAudit } = require('../audit');
 
 const router = express.Router();
@@ -9,12 +9,13 @@ const router = express.Router();
 // Treasurer and assistant can view types. Only the treasurer (OWNER) changes them.
 router.use(requireAuth, requireRole('OWNER', 'ASSISTANT'));
 
-const FIELDS = { id: true, name: true, defaultAmount: true, active: true, createdAt: true };
+const FIELDS = { id: true, name: true, defaultAmount: true, startMonth: true, active: true, createdAt: true };
 
 const pickFields = (t) => ({
   id: t.id,
   name: t.name,
   defaultAmount: t.defaultAmount,
+  startMonth: t.startMonth,
   active: t.active,
   createdAt: t.createdAt,
 });
@@ -51,6 +52,12 @@ router.post('/', requireRole('OWNER'), async (req, res, next) => {
       if (!parsed.ok) errors.push('Default amount must be a whole number of shillings, 1 or more');
       else defaultAmount = parsed.value;
     }
+    let startMonth = null;
+    if (body.startMonth !== undefined) {
+      const parsed = parseMonth(body.startMonth);
+      if (!parsed.ok) errors.push('Month must be written YYYY-MM, for example 2026-08');
+      else startMonth = parsed.value;
+    }
     if (errors.length) return res.status(400).json({ error: errors.join('. ') });
 
     const clash = await prisma.contributionType.findFirst({
@@ -62,12 +69,13 @@ router.post('/', requireRole('OWNER'), async (req, res, next) => {
 
     const type = await prisma.$transaction(async (tx) => {
       const created = await tx.contributionType.create({
-        data: { organisationId: req.user.organisationId, name, defaultAmount },
+        data: { organisationId: req.user.organisationId, name, defaultAmount, startMonth },
         select: FIELDS,
       });
       await logAudit(tx, req, 'CONTRIBUTION_TYPE_CREATED', 'ContributionType', created.id, {
         name,
         defaultAmount,
+        startMonth,
       });
       return created;
     });
@@ -78,7 +86,7 @@ router.post('/', requireRole('OWNER'), async (req, res, next) => {
   }
 });
 
-// Rename, change the default amount (or clear it with null), or deactivate / reactivate.
+// Rename, change the default amount or the month (clear the month with null), or deactivate / reactivate.
 router.patch('/:id', requireRole('OWNER'), async (req, res, next) => {
   try {
     const body = req.body || {};
@@ -94,6 +102,11 @@ router.patch('/:id', requireRole('OWNER'), async (req, res, next) => {
       const parsed = parseAmount(body.defaultAmount);
       if (!parsed.ok) errors.push('Default amount must be a whole number of shillings, 1 or more');
       else data.defaultAmount = parsed.value;
+    }
+    if (body.startMonth !== undefined) {
+      const parsed = parseMonth(body.startMonth);
+      if (!parsed.ok) errors.push('Month must be written YYYY-MM, for example 2026-08');
+      else data.startMonth = parsed.value;
     }
     if (body.active !== undefined) {
       if (typeof body.active !== 'boolean') errors.push('active must be true or false');

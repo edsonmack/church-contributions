@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { formatTZS } from '../format.js';
+import { formatTZS, monthLabel } from '../format.js';
 import AmountInput from './AmountInput.jsx';
+import MonthField from './MonthField.jsx';
 
 function AddType({ onDone, notify }) {
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [startMonth, setStartMonth] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const nameRef = useRef(null);
 
   useEffect(() => {
     setError('');
-  }, [name, amount]);
+  }, [name, amount, startMonth]);
 
   async function submit(e) {
     e.preventDefault();
@@ -22,10 +24,12 @@ function AddType({ onDone, notify }) {
     try {
       const body = { name: name.trim() };
       if (amount) body.defaultAmount = Number(amount);
+      if (startMonth) body.startMonth = startMonth;
       const { contributionType } = await api.addContributionType(body);
       notify(`Added ${contributionType.name}`);
       setName('');
       setAmount('');
+      setStartMonth('');
       onDone();
       if (nameRef.current) nameRef.current.focus();
     } catch (err) {
@@ -54,6 +58,14 @@ function AddType({ onDone, notify }) {
         <AmountInput id="type-amount" value={amount} onChange={setAmount} />
         <p className="hint">Leave this empty when the amount changes each time, such as a free will offering.</p>
       </div>
+      <div className="field">
+        <label htmlFor="type-month">Month this contribution is for (optional)</label>
+        <MonthField id="type-month" value={startMonth} onChange={setStartMonth} />
+        <p className="hint">
+          Choose a month when the contribution belongs to one month, such as ADA for August. Payments count for that
+          month even if they arrive later. Leave it as Not tied to a month for a contribution that repeats every month.
+        </p>
+      </div>
       {error && <p className="error" role="alert">{error}</p>}
       <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
         {busy ? 'Adding…' : 'Add contribution type'}
@@ -66,12 +78,14 @@ function TypeRow({ type, canEdit, onChanged, notify }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(type.name);
   const [amount, setAmount] = useState(type.defaultAmount ? String(type.defaultAmount) : '');
+  const [startMonth, setStartMonth] = useState(type.startMonth || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   function startEdit() {
     setName(type.name);
     setAmount(type.defaultAmount ? String(type.defaultAmount) : '');
+    setStartMonth(type.startMonth || '');
     setError('');
     setEditing(true);
   }
@@ -85,6 +99,7 @@ function TypeRow({ type, canEdit, onChanged, notify }) {
       await api.updateContributionType(type.id, {
         name: name.trim(),
         defaultAmount: amount ? Number(amount) : null,
+        startMonth: startMonth || null,
       });
       notify(`Saved changes to ${name.trim()}`);
       setEditing(false);
@@ -121,6 +136,10 @@ function TypeRow({ type, canEdit, onChanged, notify }) {
             <label htmlFor={`tamount-${type.id}`}>Usual amount in shillings (optional)</label>
             <AmountInput id={`tamount-${type.id}`} value={amount} onChange={setAmount} />
           </div>
+          <div className="field">
+            <label htmlFor={`tmonth-${type.id}`}>Month this contribution is for (optional)</label>
+            <MonthField id={`tmonth-${type.id}`} value={startMonth} onChange={setStartMonth} />
+          </div>
           {error && <p className="error" role="alert">{error}</p>}
           <div className="row-edit-actions">
             <button type="button" className="btn btn-quiet" onClick={() => setEditing(false)} disabled={busy}>
@@ -143,6 +162,7 @@ function TypeRow({ type, canEdit, onChanged, notify }) {
           {!type.active && <span className="chip chip-unpaid">Deactivated</span>}
         </div>
         <div className="row-line">{type.defaultAmount ? formatTZS(type.defaultAmount) : 'No usual amount'}</div>
+        {type.startMonth && <div className="row-line">For {monthLabel(type.startMonth)}</div>}
       </div>
       {canEdit && (
         <div className="row-actions">

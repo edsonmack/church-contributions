@@ -32,6 +32,8 @@ export default function QuickAdd({ refreshKey, onSaved, notify, prefill, onPrefi
   const month = effectiveDate.slice(0, 7);
   const selectedType = types.find((t) => t.id === typeId);
   const expected = selectedType ? selectedType.defaultAmount : null;
+  // A contribution tied to a month counts for that month, whatever the date received.
+  const forMonth = (selectedType && selectedType.startMonth) || effectiveDate;
 
   const load = useCallback(async () => {
     setBoot({ status: 'loading', error: '' });
@@ -200,11 +202,11 @@ export default function QuickAdd({ refreshKey, onSaved, notify, prefill, onPrefi
             focusSignal={focusSignal}
           />
           {row && row.status === 'UNPAID' && (
-            <p className="hint">Has not paid for {monthLabel(effectiveDate)}.</p>
+            <p className="hint">Has not paid for {monthLabel(forMonth)}.</p>
           )}
           {row && row.status === 'PARTIAL' && (
             <p className="hint">
-              Paid {formatTZS(row.paid)} of {formatTZS(expected)} for {monthLabel(effectiveDate)}.
+              Paid {formatTZS(row.paid)} of {formatTZS(expected)} for {monthLabel(forMonth)}.
               Still owing {formatTZS(row.owing)}.{' '}
               <button type="button" className="btn btn-link inline" onClick={() => setAmount(String(row.owing))}>
                 Fill in {formatNumber(row.owing)}
@@ -212,7 +214,7 @@ export default function QuickAdd({ refreshKey, onSaved, notify, prefill, onPrefi
             </p>
           )}
           {row && row.status === 'PAID' && (
-            <p className="hint">Already paid in full for {monthLabel(effectiveDate)}.</p>
+            <p className="hint">Already paid in full for {monthLabel(forMonth)}.</p>
           )}
         </div>
 

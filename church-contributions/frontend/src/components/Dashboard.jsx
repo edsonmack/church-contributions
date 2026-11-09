@@ -88,12 +88,14 @@ export default function Dashboard({ notify, onRecord }) {
   }
 
   function record(m) {
+    const tied = (types.list.find((x) => x.id === typeId) || {}).startMonth || null;
     onRecord({
       memberId: m.memberId,
       typeId,
       amount: m.owing,
-      // For an earlier month, backdate to its last day so the payment counts for that month.
-      date: month === thisMonth ? todayTZ() : lastDayOfMonth(month),
+      // A contribution tied to a month counts for that month whenever it is paid, so use today.
+      // Otherwise, for an earlier month, backdate to its last day so the payment counts for that month.
+      date: tied || month === thisMonth ? todayTZ() : lastDayOfMonth(month),
     });
   }
 
@@ -124,6 +126,10 @@ export default function Dashboard({ notify, onRecord }) {
     );
   }
 
+  // A contribution tied to a month always shows that month, so there is nothing to step through.
+  const tied = (types.list.find((x) => x.id === typeId) || {}).startMonth || null;
+  const shownMonth = tied || month;
+
   const data = report.data;
   const t = data ? data.totals : null;
   const extra = t ? Math.max(t.collected - (t.expected - t.outstanding), 0) : 0;
@@ -145,26 +151,33 @@ export default function Dashboard({ notify, onRecord }) {
           </select>
         </div>
 
-        <div className="month-nav">
-          <button
-            type="button"
-            className="btn btn-quiet"
-            onClick={() => setMonth(shiftMonth(month, -1))}
-            aria-label="Previous month"
-          >
-            Previous
-          </button>
-          <div className="month-label" aria-live="polite">{monthLabel(month)}</div>
-          <button
-            type="button"
-            className="btn btn-quiet"
-            onClick={() => setMonth(shiftMonth(month, 1))}
-            disabled={month >= thisMonth}
-            aria-label="Next month"
-          >
-            Next
-          </button>
-        </div>
+        {tied ? (
+          <div className="month-fixed">
+            <div className="month-label" aria-live="polite">{monthLabel(tied)}</div>
+            <p className="hint">This contribution is for {monthLabel(tied)}. Payments count for it whenever they were received.</p>
+          </div>
+        ) : (
+          <div className="month-nav">
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => setMonth(shiftMonth(month, -1))}
+              aria-label="Previous month"
+            >
+              Previous
+            </button>
+            <div className="month-label" aria-live="polite">{monthLabel(shownMonth)}</div>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => setMonth(shiftMonth(month, 1))}
+              disabled={month >= thisMonth}
+              aria-label="Next month"
+            >
+              Next
+            </button>
+          </div>
+        )}
 
         {report.status === 'error' && (
           <>

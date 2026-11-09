@@ -982,3 +982,19 @@ a.btn-link {
   display: flex;
   margin-bottom: 0;
 }
+
+
+/* Month and year pickers side by side */
+.month-field {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 10px;
+}
+
+.month-fixed {
+  margin: 0 0 18px;
+}
+
+.month-fixed .month-label {
+  text-align: left;
+}
